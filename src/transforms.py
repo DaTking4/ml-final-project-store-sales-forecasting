@@ -13,6 +13,17 @@ _HOLIDAY_DATES = pd.to_datetime([
 ])
 
 
+def encode_is_holiday(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df["IsHoliday"] = df["IsHoliday"].astype(int)
+    return df
+
+
+def merge_features(df: pd.DataFrame, features: pd.DataFrame) -> pd.DataFrame:
+    features = encode_is_holiday(handle_missing(features.copy()))
+    return df.merge(features.drop(columns="IsHoliday"), on=["Store", "Date"], how="left")
+
+
 def handle_missing(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     markdowns = ["MarkDown1", "MarkDown2", "MarkDown3", "MarkDown4", "MarkDown5"]
