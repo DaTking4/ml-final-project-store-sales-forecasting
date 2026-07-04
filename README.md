@@ -1,5 +1,15 @@
 # ml-final-project-walmart-recruiting
 
+## მონაცემების წინასწარი დამუშავება
+
+### NaN მნიშვნელობები
+
+![Missingness chart](assets/missingness.png)
+
+- `MarkDown1`–`MarkDown5` — NaN მნიშვნელობები შეივსება 0-ით, რადგან NaN ნიშნავს რომ მოცემულ კვირაში ფასდაკლება არ ყოფილა.
+- `CPI`, `Unemployment` — შეივსება Forward filling / Backward filling მეთოდის გამოყენებით თითოეული მაღაზიისთვის ცალ-ცალკე, რადგან ისინი დროზე დამოკიდებული ცვლადებია.
+- `Temperature`, `Fuel_Price` — არ გვაქვს NaN მნიშვნელობები.
+
 ## Feature Engineering
 
 ### 1. დროის ცვლადები

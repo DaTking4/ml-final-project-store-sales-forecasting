@@ -13,6 +13,18 @@ _HOLIDAY_DATES = pd.to_datetime([
 ])
 
 
+def handle_missing(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    markdowns = ["MarkDown1", "MarkDown2", "MarkDown3", "MarkDown4", "MarkDown5"]
+    df[markdowns] = df[markdowns].fillna(0)
+    for col in ["CPI", "Unemployment"]:
+        if col in df.columns:
+            df[col] = df.groupby("Store")[col].transform(
+                lambda s: s.ffill().bfill()
+            )
+    return df
+
+
 def add_store_features(df: pd.DataFrame, stores: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     stores = stores[["Store", "Type", "Size"]].copy()
