@@ -13,6 +13,14 @@ _HOLIDAY_DATES = pd.to_datetime([
 ])
 
 
+def add_store_features(df: pd.DataFrame, stores: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    stores = stores[["Store", "Type", "Size"]].copy()
+    type_dummies = pd.get_dummies(stores["Type"], prefix="Type")
+    stores = pd.concat([stores.drop(columns="Type"), type_dummies], axis=1)
+    return df.merge(stores, on="Store", how="left")
+
+
 def add_time_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
