@@ -32,5 +32,17 @@
 
 **დამატებული სვეტები (`add_store_features`):**
 
-- `Type_A`, `Type_B`, `Type_C` - მაღაზიის ტიპის One-hot encoding-ის გამოყენებით, რადგან მხოლოდ 3 ტიპი გვაქვს მაღაზიებისთვის და მხოლოდ 3 boolean სვეტის დამატება გვიწევს.
+- `Type_A`, `Type_B`, `Type_C` - მაღაზიის ტიპის One-hot encoding-ის გამოყენებით, რადგან 3 ტიპი გვაქვს მაღაზიებისთვის და მხოლოდ 3 boolean სვეტის დამატება გვიწევს.
 - `Size` - მაღაზიის ფართობი.
+
+### 3. IsHoliday კოდირება
+
+**(`encode_is_holiday`):**
+
+`IsHoliday` სვეტი თავდაპირველად Boolean არის (`True`/`False`). ყველა მოდელისთვის გარდავქმნით მას მთელ რიცხვად (`1`/`0`), რათა მოდელმა შეძლოს მისი გამოყენება.
+
+### 4. features.csv-ის დამერჯვა
+
+**(`merge_features`):**
+
+`features.csv` იმერჯება train და test მონაცემებთან `Store` და `Date` სვეტების მიხედვით, რათა თითოეულ სტრიქონს დაემატოს `Temperature`, `Fuel_Price`, `CPI`, `Unemployment` და `MarkDown1`–`MarkDown5`.
