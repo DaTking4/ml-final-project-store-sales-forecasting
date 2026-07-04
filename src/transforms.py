@@ -30,6 +30,5 @@ def add_time_features(df: pd.DataFrame) -> pd.DataFrame:
 
     df["DaysSinceLastHoliday"] = days_since.astype(float)
     df["DaysToNextHoliday"] = days_until.astype(float)
-    df["DaysToNearestHoliday"] = np.minimum(days_since, days_until)
 
     return df
