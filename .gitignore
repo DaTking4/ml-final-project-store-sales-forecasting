@@ -1,3 +1,28 @@
 venv/
+.venv311/
+.uv-cache/
+.uv-python/
+.matplotlib/
+.ipynb_checkpoints/
+notebooks/**/.ipynb_checkpoints/
+mlflow*.db
+mlruns/
+wandb/
+lightning_logs/
+artifacts/
+reports/
+__pycache__/
+*.py[cod]
+notebooks/**/.matplotlib/
+notebooks/**/wandb/
+notebooks/**/lightning_logs/
+notebooks/**/mlruns/
+notebooks/**/artifacts/
+notebooks/**/reports/
+notebooks/Deep Learning/.matplotlib/
+notebooks/Deep Learning/artifacts/
+notebooks/Deep Learning/lightning_logs/
+notebooks/Deep Learning/wandb/
+notebooks/Deep Learning/reports/
 data/
 requirements.txt
