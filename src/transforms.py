@@ -63,3 +63,24 @@ def add_time_features(df: pd.DataFrame) -> pd.DataFrame:
     df["DaysToNextHoliday"] = days_until.astype(float)
 
     return df
+
+
+def apply_shared_features(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df["Date"] = pd.to_datetime(df["Date"])
+
+    df = handle_missing(df)
+
+    if "Type" in df.columns:
+        type_dummies = pd.get_dummies(df["Type"], prefix="Type")
+        df = pd.concat([df.drop(columns=["Type"]), type_dummies], axis=1)
+
+    if "IsHoliday" in df.columns:
+        df["IsHoliday"] = df["IsHoliday"].astype(int)
+
+    df = add_time_features(df)
+
+    sort_cols = [col for col in ["Store", "Dept", "Date"] if col in df.columns]
+    df = df.sort_values(sort_cols).reset_index(drop=True)
+
+    return df
