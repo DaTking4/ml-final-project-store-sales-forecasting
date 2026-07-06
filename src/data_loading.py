@@ -22,3 +22,18 @@ def load_stores() -> pd.DataFrame:
 
 def load_all():
     return load_train(), load_test(), load_features(), load_stores()
+
+
+def load_merged():
+    train, test, features, stores = load_all()
+
+    train = train.merge(features, on=["Store", "Date", "IsHoliday"], how="left")
+    test = test.merge(features, on=["Store", "Date", "IsHoliday"], how="left")
+
+    train = train.merge(stores, on="Store", how="left")
+    test = test.merge(stores, on="Store", how="left")
+
+    train = train.sort_values(["Store", "Dept", "Date"]).reset_index(drop=True)
+    test = test.sort_values(["Store", "Dept", "Date"]).reset_index(drop=True)
+
+    return train, test
