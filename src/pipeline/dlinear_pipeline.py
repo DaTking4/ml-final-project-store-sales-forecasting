@@ -2,6 +2,8 @@ import pandas as pd
 import mlflow.pyfunc
 from neuralforecast import NeuralForecast
 
+from src.training_diagnostics import strip_neuralforecast_callbacks
+
 
 def to_long_format(
     df: pd.DataFrame,
@@ -53,6 +55,8 @@ class DLinearForecastPipeline(mlflow.pyfunc.PythonModel):
 
     def load_context(self, context):
         self.nf_model = NeuralForecast.load(path=context.artifacts["nf_model_dir"])
+        for model in getattr(self.nf_model, "models", []):
+            strip_neuralforecast_callbacks(model)
 
     def predict(self, context, model_input):
         test_df = model_input.copy()
@@ -74,6 +78,8 @@ class DLinearForecastPipeline(mlflow.pyfunc.PythonModel):
 
             forecast_df = self.nf_model.predict(futr_df=futr_df)
         else:
+            for model in getattr(self.nf_model, "models", []):
+                strip_neuralforecast_callbacks(model)
             forecast_df = self.nf_model.predict()
 
         forecast_df["ds"] = pd.to_datetime(forecast_df["ds"])
