@@ -36,12 +36,66 @@ def fit_prophet_model(y: pd.Series, config: dict[str, Any]):
     from prophet import Prophet  # import locally to avoid slow top-level import
 
     params = {k: v for k, v in config.items() if k not in ("label", "regime")}
-    model = Prophet(holidays=make_holidays_df(), **params)
+    # We only ever read `yhat` from predict() output, never the uncertainty
+    # interval columns, so skip posterior sampling entirely -- it's pure cost
+    # for output nobody uses, and it runs on every predict() call.
+    model = Prophet(holidays=make_holidays_df(), uncertainty_samples=0, **params)
     prophet_df = pd.DataFrame({"ds": y.index, "y": y.values})
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         model.fit(prophet_df)
     return model
+
+
+def _evaluate_one_series(
+    unique_id: str,
+    y_train: pd.Series,
+    valid_group: pd.DataFrame,
+    config: dict[str, Any],
+    model_col: str,
+    min_train_points: int,
+):
+    valid_group = valid_group.copy()
+    fallback_value = float(y_train.iloc[-1])
+
+    if len(y_train) < min_train_points:
+        forecast = np.full(len(valid_group), fallback_value, dtype=float)
+        failed = True
+        fitted_vals = pd.Series(dtype=float)
+    else:
+        try:
+            model = fit_prophet_model(y_train, config)
+
+            future_df = pd.DataFrame({"ds": pd.DatetimeIndex(valid_group["ds"].values)})
+            fc = model.predict(future_df)["yhat"].values.astype(float)
+
+            if len(fc) != len(valid_group) or np.isnan(fc).any():
+                forecast = np.full(len(valid_group), fallback_value, dtype=float)
+                failed = True
+                fitted_vals = pd.Series(dtype=float)
+            else:
+                forecast = fc
+                failed = False
+                insample = model.predict(pd.DataFrame({"ds": y_train.index}))
+                fitted_vals = pd.Series(insample["yhat"].values, index=y_train.index)
+        except Exception:
+            forecast = np.full(len(valid_group), fallback_value, dtype=float)
+            failed = True
+            fitted_vals = pd.Series(dtype=float)
+
+    valid_group[model_col] = forecast
+    valid_group["used_fallback"] = failed
+
+    train_row = None
+    if not fitted_vals.empty:
+        train_row = pd.DataFrame({
+            "unique_id": unique_id,
+            "ds": fitted_vals.index,
+            "y": y_train.reindex(fitted_vals.index).to_numpy(),
+            model_col: fitted_vals.to_numpy(),
+        })
+
+    return valid_group, train_row, failed
 
 
 def evaluate_prophet_config(
@@ -52,56 +106,26 @@ def evaluate_prophet_config(
     holiday_lookup: pd.DataFrame,
     model_col: str,
     min_train_points: int,
+    n_jobs: int = 8,
 ) -> tuple[pd.DataFrame, float, int, float]:
-    rows = []
-    train_rows = []
-    failures = 0
+    from joblib import Parallel, delayed
 
-    for idx, unique_id in enumerate(prophet_ids, start=1):
-        y_train = train_by_id[unique_id]
-        valid_group = valid_by_id[unique_id].copy()
-        fallback_value = float(y_train.iloc[-1])
+    # threading, not the default process-pool (loky) backend: each series' real
+    # work happens in an external cmdstan subprocess, and Python releases the
+    # GIL while waiting on it, so threads already get true OS-level concurrency
+    # here -- without loky's extra worker-process layer, which was crashing on
+    # concurrent first-launches of the freshly-built stan binary.
+    print(f"Evaluating {len(prophet_ids):,} series for {config.get('label', '')} (n_jobs={n_jobs}, threading)")
+    results = Parallel(n_jobs=n_jobs, backend="threading", verbose=1)(
+        delayed(_evaluate_one_series)(
+            unique_id, train_by_id[unique_id], valid_by_id[unique_id], config, model_col, min_train_points,
+        )
+        for unique_id in prophet_ids
+    )
 
-        if len(y_train) < min_train_points:
-            forecast = np.full(len(valid_group), fallback_value, dtype=float)
-            failed = True
-            fitted_vals = pd.Series(dtype=float)
-        else:
-            try:
-                model = fit_prophet_model(y_train, config)
-
-                future_df = pd.DataFrame({"ds": pd.DatetimeIndex(valid_group["ds"].values)})
-                fc = model.predict(future_df)["yhat"].values.astype(float)
-
-                if len(fc) != len(valid_group) or np.isnan(fc).any():
-                    forecast = np.full(len(valid_group), fallback_value, dtype=float)
-                    failed = True
-                    fitted_vals = pd.Series(dtype=float)
-                else:
-                    forecast = fc
-                    failed = False
-                    insample = model.predict(pd.DataFrame({"ds": y_train.index}))
-                    fitted_vals = pd.Series(insample["yhat"].values, index=y_train.index)
-            except Exception:
-                forecast = np.full(len(valid_group), fallback_value, dtype=float)
-                failed = True
-                fitted_vals = pd.Series(dtype=float)
-
-        failures += int(failed)
-        valid_group[model_col] = forecast
-        valid_group["used_fallback"] = failed
-        rows.append(valid_group)
-
-        if not fitted_vals.empty:
-            train_rows.append(pd.DataFrame({
-                "unique_id": unique_id,
-                "ds": fitted_vals.index,
-                "y": y_train.reindex(fitted_vals.index).to_numpy(),
-                model_col: fitted_vals.to_numpy(),
-            }))
-
-        if idx % 100 == 0:
-            print(f"Evaluated {idx:,}/{len(prophet_ids):,} series for {config.get('label', '')}")
+    rows = [r[0] for r in results]
+    train_rows = [r[1] for r in results if r[1] is not None]
+    failures = sum(r[2] for r in results)
 
     cv_df = pd.concat(rows, ignore_index=True)
     cv_df = cv_df.merge(holiday_lookup, on=["unique_id", "ds"], how="left")
@@ -119,29 +143,41 @@ def evaluate_prophet_config(
     return cv_df, float(val_wmae), failures, float(train_wmae)
 
 
+def _fit_one_final_series(unique_id: str, y: pd.Series, config: dict[str, Any]):
+    y = y.copy()
+    y.index = pd.DatetimeIndex(y.index)
+    y = y.asfreq("W-FRI").interpolate(limit_direction="both")
+    try:
+        return unique_id, fit_prophet_model(y, config), None
+    except Exception:
+        return unique_id, None, unique_id
+
+
 def fit_prophet_models(
     full_long_df: pd.DataFrame,
     ids,
     config: dict[str, Any],
+    n_jobs: int = 8,
 ) -> tuple[dict[str, Any], list[str]]:
+    from joblib import Parallel, delayed
+
+    grouped = {
+        unique_id: group.sort_values("ds")["y"].astype(float)
+        for unique_id, group in full_long_df[full_long_df["unique_id"].isin(ids)].groupby("unique_id")
+    }
+
+    print(f"Fitting {len(ids):,} final Prophet models (n_jobs={n_jobs}, threading)")
+    results = Parallel(n_jobs=n_jobs, backend="threading", verbose=1)(
+        delayed(_fit_one_final_series)(unique_id, grouped[unique_id], config)
+        for unique_id in ids
+    )
+
     models: dict[str, Any] = {}
     failures: list[str] = []
-
-    for idx, unique_id in enumerate(ids, start=1):
-        y = (
-            full_long_df[full_long_df["unique_id"] == unique_id]
-            .sort_values("ds")["y"]
-            .astype(float)
-        )
-        y.index = pd.DatetimeIndex(y.index)
-        y = y.asfreq("W-FRI").interpolate(limit_direction="both")
-
-        try:
-            models[unique_id] = fit_prophet_model(y, config)
-        except Exception:
-            failures.append(unique_id)
-
-        if idx % 100 == 0:
-            print(f"Fit {idx:,}/{len(ids):,} final Prophet models")
+    for unique_id, model, failure in results:
+        if model is not None:
+            models[unique_id] = model
+        else:
+            failures.append(failure)
 
     return models, failures
