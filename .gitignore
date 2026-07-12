@@ -25,4 +25,3 @@ notebooks/Deep Learning/lightning_logs/
 notebooks/Deep Learning/wandb/
 notebooks/Deep Learning/reports/
 data/
-requirements.txt
