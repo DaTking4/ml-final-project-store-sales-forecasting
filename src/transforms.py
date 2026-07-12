@@ -70,6 +70,27 @@ def add_time_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def build_store_date_features(
+    features_df: pd.DataFrame,
+    futr_cols: list[str],
+) -> pd.DataFrame:
+    """Store+Date future exogenous covariates (calendar, weather, economic,
+    markdown, holiday), deduplicated to one row per Store+Date.
+
+    None of `futr_cols` vary by Dept, so this table (built from the complete
+    features.csv reference data) can backfill exogenous values for series/dates
+    the sparse per-department test rows don't cover.
+    """
+    df = features_df.copy()
+    df["Date"] = pd.to_datetime(df["Date"])
+    df = handle_missing(df)
+    if "IsHoliday" in df.columns:
+        df["IsHoliday"] = df["IsHoliday"].astype(int)
+    df = add_time_features(df)
+    keep_cols = ["Store", "Date"] + [c for c in futr_cols if c in df.columns]
+    return df[keep_cols].drop_duplicates(["Store", "Date"]).reset_index(drop=True)
+
+
 def apply_shared_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["Date"] = pd.to_datetime(df["Date"])
