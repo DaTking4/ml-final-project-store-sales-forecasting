@@ -249,7 +249,7 @@ TFT გამოვიყენეთ როგორც attention-based deep le
 - `ds` — კვირის თარიღი.
 - `y` — სამიზნე ცვლადი, ანუ `Weekly_Sales`.
 
-TFT-ის მთავარი იდეაა გააერთიანოს სამი ტიპის ინფორმაცია: **static covariates** (მაღაზიის ტიპი, ზომა, Store/Dept ID), **known future covariates** (holidays, time features, macro indicators), და **past observed target** (ისტორიული გაყიდვები). Variable Selection Network ირჩევს რომელი feature-ია ყველაზე სასარგებლო თითოეული სერიისთვის, Gated Residual Networks კი ფილტრავს ნაკლებად სასარგებლო სიგნალებს. Temporal Self-Attention mechanism-ი სერიაში შორეულ კვირებს შორის კავშირებს ახდენს, რაც საშუალებას აძლევს მოდელს გამოიყენოს, მაგალითად, გასული წლის holiday spike-ები ამ წლის პროგნოზისთვის.
+TFT-ის მთავარი იდეაა გააერთიანოს სამი ტიპის ინფორმაცია: **static covariates** (მაღაზიის ტიპი, ზომა, Store/Dept ID), **known future covariates** (holidays, time features, macro indicators), და **past observed target** (ისტორიული გაყიდვები). Variable Selection Network ირჩევს რომელი feature-ია ყველაზე სასარგებლო თითოეული სერიისთვის, Gated Residual Networks კი ფილტრავს ნაკლებად სასარგებლო სიგნალებს. Temporal Self-Attention mechanism-ი სერიაში შორეულ კვირებს შორის აკავშირებს, რაც საშუალებას აძლევს მოდელს გამოიყენოს, მაგალითად, გასული წლის holiday spike-ები ამ წლის პროგნოზისთვის.
 
 ### რატომ ვიყენებთ exogenous features-ს
 
@@ -285,7 +285,7 @@ validation setup:
 
 ### Hyperparameter search
 
-გავუშვით TFT-ის 16 configuration (30-დან — overfit configs გამოტოვდა compute constraints-ის გამო) და ისინი დავყავით underfit / balanced კატეგორიებად.
+გავუშვით TFT-ის 16 configuration და ისინი დავყავით underfit / balanced კატეგორიებად.
 
 Underfit configuration-ები გვაჩვენებს შემთხვევებს, სადაც hidden size ძალიან პატარაა ან training steps ძალიან ცოტაა და attention mechanism-ს საკმარისი სიღრმე არ აქვს სასარგებლო კავშირების სასწავლად. Balanced configuration-ების მიზანი იყო hidden size, n_head, dropout და training steps-ის ოპტიმალური კომბინაციის პოვნა.
 
@@ -337,7 +337,7 @@ Holiday vs non-holiday error-იც რომ შევადაროთ:
 
 TFT ამ პროექტში გამოვიყენეთ როგორც პირველი მოდელი, რომელიც სრულ exogenous feature set-ს იყენებს — future covariates-სა და static covariates-ს. მისი მიზანი იყო გვენახა, შეუძლია თუ არა attention mechanism-სა და variable selection-ზე დამყარებულ მოდელს target history-ს მიღმა სიგნალებით შედეგის გაუმჯობესება.
 
-საუკეთესო TFT configuration-მა (`balanced_1`) validation-ზე მიიღო `2,216.19` WMAE. ეს შედეგი DLinear-ს (`2,555.44`) აჯობა, მაგრამ N-BEATS-ს (`1,858.23`) ჩამოუვარდა, მიუხედავად იმისა, რომ TFT-ს გაცილებით მეტი ინფორმაცია ჰქონდა (15 future + 6 static features). ეს გვიჩვენებს, რომ ამ მონაცემებში სეზონური history-ს პირდაპირი decomposition უფრო ძლიერი სიგნალია, ვიდრე exogenous features-ის attention-based კომბინაცია.
+საუკეთესო TFT კონფიგურაცია (`balanced_1`) validation-ზე მიიღო `2,216.19` WMAE. ეს შედეგი DLinear-ს (`2,555.44`) აჯობა, მაგრამ N-BEATS-ს (`1,858.23`) ჩამოუვარდა, მიუხედავად იმისა, რომ TFT-ს გაცილებით მეტი ინფორმაცია ჰქონდა (15 future + 6 static features). ეს გვიჩვენებს, რომ ამ მონაცემებში სეზონური history-ს პირდაპირი decomposition უფრო ძლიერი სიგნალია, ვიდრე exogenous features-ის attention-based კომბინაცია.
 
 TFT-ის მთავარი უპირატესობა მისი flexibility-ია: Variable Selection Network-ი ავტომატურად ათეულობით feature-დან ირჩევს ყველაზე სასარგებლოს. ეს განსაკუთრებით ღირებულია Walmart-ის მონაცემებში, სადაც `MarkDown` features-ი მხოლოდ გარკვეულ Store-Dept წყვილებზე მოქმედებს.
 
@@ -534,7 +534,7 @@ XGBoost-ის წარმატების მიზეზი ალბათ
 
 ## ARIMA მოდელი
 
-ARIMA გამოვიყენეთ როგორც კლასიკური სტატისტიკური baseline. ის ყველა სხვა მოდელისგან განსხვავდება: არ სწავლობს cross-series pattern-ებს, არ იყენებს exogenous features-ს და neural network-ის მსგავსად არ ახდენს optimization-ს gradient descent-ით. ამის ნაცვლად, ARIMA თითოეული Store-Dept სერიისთვის ცალ-ცალკე ფიტდება likelihood-ის მაქსიმიზაციის გზით. ეს მიდგომა კლასიკური time-series forecasting-ის სტანდარტია.
+ARIMA გამოვიყენეთ როგორც კლასიკური სტატისტიკური baseline. ის ყველა სხვა მოდელისგან განსხვავდება: არ სწავლობს cross-series pattern-ებს, არ იყენებს exogenous features-ს და neural network-ის მსგავსად არ ახდენს ოპტიმიზაციას gradient descent-ით. ამის ნაცვლად, ARIMA თითოეული Store-Dept სერიისთვის ცალ-ცალკე ფიტდება likelihood-ის მაქსიმიზაციის გზით. ეს მიდგომა კლასიკური time-series forecasting-ის სტანდარტია.
 
 ARIMA(p, d, q) სამი კომპონენტისგან შედგება:
 - **p** — autoregressive order: რამდენი წინა მნიშვნელობა გამოიყენება პროგნოზში
