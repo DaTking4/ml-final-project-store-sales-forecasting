@@ -231,15 +231,6 @@ WMAE გამოვიყენეთ როგორც მთავარი 
 
 <img src="notebooks/Deep%20Learning/Plots/nbeats_wmae_comparison.png" alt="N-BEATS WMAE comparison" width="600">
 
-შემდეგი plot აჩვენებს იმ Store-Dept წყვილებს, სადაც validation error ყველაზე მაღალი იყო. ასეთი error analysis მნიშვნელოვანია, რადგან overall WMAE კარგ სურათს გვაძლევს, მაგრამ კონკრეტული პრობლემური departments აჩვენებს სად შეიძლება დაგვჭირდეს დამატებითი feature engineering ან სხვა მოდელის გამოყენება.
-
-[📸 აქ ჩასვით N-BEATS-ის ყველაზე დიდი შეცდომების მქონე Store-Dept წყვილების გრაფიკი — `notebooks/Deep Learning/Plots/nbeats_worst_store_dept.png`]
-
-Holiday vs non-holiday error-იც რომ შევადაროთ:
-
-- Non-holiday MAE: `[შევსება საჭიროა]`
-- Holiday MAE: `[შევსება საჭიროა]`
-
 ### დასკვნა
 
 N-BEATS ამ პროექტში გამოვიყენეთ როგორც interpretable deep learning მოდელი, რომელიც ავტომატურად ყოფს time series-ს trend და seasonality კომპონენტებად. მისი მიზანი იყო გვენახა, შეუძლია თუ არა სტრუქტურულ decomposition-ზე დამყარებულ neural ქსელს DLinear-ზე მეტი სიგნალის ამოღება ისტორიული გაყიდვების history-დან.
