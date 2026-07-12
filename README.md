@@ -238,3 +238,103 @@ N-BEATS ამ პროექტში გამოვიყენეთ რო
 საუკეთესო N-BEATS configuration-მა (`balanced_9`) validation-ზე მიიღო `1,858.23` WMAE, რაც DLinear-ის საუკეთეს შედეგს (`2,555.44`) საგრძნობლად აჯობა. ეს სხვაობა გვიჩვენებს, რომ trend/seasonality decomposition-ის სტრუქტურა და ბლოკ-სტეკური architecture — სადაც ყოველი ბლოკი ნარჩენებს ამუშავებს — Walmart-ის სეზონური weekly sales pattern-ებისთვის ბევრად უფრო შესაფერისია, ვიდრე მარტივი linear projection.
 
 N-BEATS-ის მთავარი უპირატესობა მისი interpretability-ია: trend სტეკი გვაჩვენებს გრძელვადიანი ზრდა/კლების ტენდენციას, ხოლო seasonality სტეკი — განმეორებად კვირობრივ და წლიურ pattern-ებს. ეს insight-ი პრაქტიკული მნიშვნელობა აქვს — შეგვიძლია გვესმოდეს, სად ჭირდება მოდელს გაუმჯობესება და რა ტიპის pattern-ებს ვერ ჭერს.
+
+## Temporal Fusion Transformer (TFT) მოდელი
+
+TFT გამოვიყენეთ როგორც attention-based deep learning მოდელი, რომელიც DLinear-ისა და N-BEATS-ისგან განსხვავებით გათვლილია exogenous features-ის გათვალისწინებაზე. მონაცემები გადავიყვანეთ `NeuralForecast`-ის long format-ში, თითოეული `Store-Dept` წყვილი ცალ-ცალკე time series-ად:
+
+- `unique_id` — ერთი time-series თითოეული `Store` + `Dept` წყვილისთვის.
+- `ds` — კვირის თარიღი.
+- `y` — სამიზნე ცვლადი, ანუ `Weekly_Sales`.
+
+TFT-ის მთავარი იდეაა გააერთიანოს სამი ტიპის ინფორმაცია: **static covariates** (მაღაზიის ტიპი, ზომა, Store/Dept ID), **known future covariates** (holidays, time features, macro indicators), და **past observed target** (ისტორიული გაყიდვები). Variable Selection Network ირჩევს რომელი feature-ია ყველაზე სასარგებლო თითოეული სერიისთვის, Gated Residual Networks კი ფილტრავს ნაკლებად სასარგებლო სიგნალებს. Temporal Self-Attention mechanism-ი სერიაში შორეულ კვირებს შორის კავშირებს ახდენს, რაც საშუალებას აძლევს მოდელს გამოიყენოს, მაგალითად, გასული წლის holiday spike-ები ამ წლის პროგნოზისთვის.
+
+### რატომ ვიყენებთ exogenous features-ს
+
+TFT-ის ამ ექსპერიმენტში პირველად გამოვიყენეთ სრული feature set — ისტორიული გაყიდვებისა და exogenous ცვლადების კომბინაცია. TFT-ის არქიტექტურა სპეციალურად შექმნილია კოვარიანტების ორ კატეგორიასთან სამუშაოდ:
+
+**Future exogenous** (`15` სვეტი) — ცვლადები, რომლებიც მომავალ კვირებზეც ცნობილია პროგნოზის დროს:
+`IsHoliday`, `Temperature`, `Fuel_Price`, `MarkDown1`–`MarkDown5`, `CPI`, `Unemployment`, `Year`, `Month`, `WeekOfYear`, `DaysSinceLastHoliday`, `DaysToNextHoliday`
+
+**Static exogenous** (`6` სვეტი) — ცვლადები, რომლებიც დროში არ იცვლება:
+`Store`, `Dept`, `Size`, `Type_A`, `Type_B`, `Type_C`
+
+ეს feature set განსხვავდება DLinear-ისა და N-BEATS-ის `target_history_only` მიდგომისგან. TFT-ის მიზანი იყო გვენახა, შეუძლია თუ არა მოდელს exogenous სიგნალებით (holiday dates, markdowns, macro) უფრო მეტი სიზუსტის მიღება.
+
+### Train/Validation setup
+
+TFT შევაფასეთ DLinear-ისა და N-BEATS-ის იდენტური time-based validation სქემით, რათა შედეგები პირდაპირ შედარებადი ყოფილიყო.
+
+validation setup:
+
+- Train პერიოდი: `2010-02-05`-დან `2012-01-27`-მდე
+- Validation პერიოდი: `2012-02-03`-დან `2012-10-26`-მდე
+- Input window: `52` კვირა, ანუ მოდელი ყოველი პროგნოზისთვის უყურებს ბოლო ერთ წელს
+- Forecast horizon: `26` კვირა
+- Frequency: weekly Friday (`W-FRI`)
+
+სხვა მოდელების მსგავსად, გამოვიყენეთ სრული ისტორიის მქონე სერიები:
+
+- სულ Store-Dept time series: `3331`
+- სრული ისტორიის მქონე რიგები: `2660`
+- მოკლე ან არათანაბარი სერიები, რომლებიც TFT train/evaluation-იდან ამოვიღეთ: `671`
+
+საბოლოო prediction pipeline-ში მოკლე სერიებისთვის fallback ლოგიკა დავამატეთ. თუ TFT კონკრეტულ `Store-Dept` წყვილზე პროგნოზს ვერ აბრუნებს, ვიყენებთ ამ სერიის ბოლო ცნობილ `Weekly_Sales` მნიშვნელობას. თუ არც ეს არსებობს, ვიყენებთ გლობალურ median fallback-ს (`7,612.03`).
+
+### Hyperparameter search
+
+გავუშვით TFT-ის 16 configuration (30-დან — overfit configs გამოტოვდა compute constraints-ის გამო) და ისინი დავყავით underfit / balanced კატეგორიებად.
+
+Underfit configuration-ები გვაჩვენებს შემთხვევებს, სადაც hidden size ძალიან პატარაა ან training steps ძალიან ცოტაა და attention mechanism-ს საკმარისი სიღრმე არ აქვს სასარგებლო კავშირების სასწავლად. Balanced configuration-ების მიზანი იყო hidden size, n_head, dropout და training steps-ის ოპტიმალური კომბინაციის პოვნა.
+
+TFT-ისთვის განსაკუთრებით მნიშვნელოვანია `hidden_size` (embedding სივრცის სიგანე) და `n_head` (attention head-ების რაოდენობა) — ეს ორი პარამეტრი განსაზღვრავს, რამდენ parallel pattern-ს სწავლობს მოდელი ერთდროულად.
+
+ძირითადი tuning parameters იყო:
+
+- `input_size`
+- `hidden_size`
+- `n_head`
+- `dropout`
+- `max_steps`
+- `learning_rate`
+- `batch_size`
+
+საუკეთესო run იყო `balanced_1`:
+
+| პარამეტრი | მნიშვნელობა |
+|---|---:|
+| `input_size` | `52` |
+| `hidden_size` | `32` |
+| `n_head` | `2` |
+| `dropout` | `0.10` |
+| `max_steps` | `300` |
+| `learning_rate` | `0.001` |
+| `batch_size` | `128` |
+| Validation WMAE | `2,216.19` |
+
+WMAE გამოვიყენეთ როგორც მთავარი metric, რადგან Walmart-ის competition-ის შეფასებაშიც holiday weeks უფრო მაღალი წონით ფასდება.
+
+### TFT plots
+
+ქვემოთ მოცემული plot აჩვენებს TFT runs-ის შედარებას validation WMAE-ის მიხედვით. მთავარი მიზანი იყო გვეპოვა ის hyperparameter configuration, რომელსაც held-out validation პერიოდზე ყველაზე დაბალი შეცდომა ჰქონდა. საუკეთესო შედეგი მიიღო `balanced_1` configuration-მა.
+
+<img src="notebooks/Deep%20Learning/Plots/tft_wmae_comparison.png" alt="TFT WMAE comparison" width="600">
+
+შემდეგი plot აჩვენებს იმ Store-Dept წყვილებს, სადაც validation error ყველაზე მაღალი იყო. ყველაზე რთული სერიები აღმოჩნდა `(14, 92)`, `(10, 72)`, `(14, 95)`, `(28, 92)` და `(14, 72)`.
+
+<img src="notebooks/Deep%20Learning/Plots/tft_worst_store_dept.png" alt="TFT worst Store-Dept validation errors" width="600">
+
+Holiday vs non-holiday error-იც რომ შევადაროთ:
+
+- Non-holiday MAE: `2,079.36`
+- Holiday MAE: `2,722.47`
+
+ეს ნიშნავს, რომ TFT-ს holiday კვირებზე საგრძნობლად უფრო მაღალი შეცდომა ჰქონდა. ეს მოსალოდნელია, რადგან holiday periods-ში გაყიდვები კომპლექსური spike-ებს ქმნის, რომლებიც ყოველ წელს სხვადასხვა ინტენსივობისაა. მიუხედავად იმისა, რომ TFT-ს `IsHoliday` და `DaysToNextHoliday` features-ები ჰქონდა, ეს spike-ების ზუსტი სიდიდე history-ზე დაყრდნობით ძნელი სასწავლია.
+
+### დასკვნა
+
+TFT ამ პროექტში გამოვიყენეთ როგორც პირველი მოდელი, რომელიც სრულ exogenous feature set-ს იყენებს — future covariates-სა და static covariates-ს. მისი მიზანი იყო გვენახა, შეუძლია თუ არა attention mechanism-სა და variable selection-ზე დამყარებულ მოდელს target history-ს მიღმა სიგნალებით შედეგის გაუმჯობესება.
+
+საუკეთესო TFT configuration-მა (`balanced_1`) validation-ზე მიიღო `2,216.19` WMAE. ეს შედეგი DLinear-ს (`2,555.44`) აჯობა, მაგრამ N-BEATS-ს (`1,858.23`) ჩამოუვარდა, მიუხედავად იმისა, რომ TFT-ს გაცილებით მეტი ინფორმაცია ჰქონდა (15 future + 6 static features). ეს გვიჩვენებს, რომ ამ მონაცემებში სეზონური history-ს პირდაპირი decomposition უფრო ძლიერი სიგნალია, ვიდრე exogenous features-ის attention-based კომბინაცია.
+
+TFT-ის მთავარი უპირატესობა მისი flexibility-ია: Variable Selection Network-ი ავტომატურად ათეულობით feature-დან ირჩევს ყველაზე სასარგებლოს. ეს განსაკუთრებით ღირებულია Walmart-ის მონაცემებში, სადაც `MarkDown` features-ი მხოლოდ გარკვეულ Store-Dept წყვილებზე მოქმედებს.
