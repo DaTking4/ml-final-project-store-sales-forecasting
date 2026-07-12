@@ -144,3 +144,106 @@ DLinear ამ პროექტში გამოვიყენეთ რო
 საუკეთესო DLinear configuration-მა validation-ზე მიიღო `2,555.44` WMAE. ეს შედეგი აჩვენებს, რომ historical `Weekly_Sales` უკვე შეიცავს ბევრ მნიშვნელოვან სიგნალს: სეზონურობას, holiday uplift-ს, department-specific behavior-ს და store-level demand pattern-ებს. ანუ, მიუხედავად იმისა, რომ მოდელი არ იყენებს `Temperature`, `Fuel_Price`, `CPI`, `Unemployment` ან `MarkDown` features-ს, მხოლოდ გაყიდვების history-დან მაინც შეუძლია ძლიერი პროგნოზის გაკეთება.
 
 DLinear-ის მთავარი უპირატესობა მისი სიმარტივეა. მოდელი სწრაფად train-დება, მარტივად კონტროლდება და კარგი benchmark-ია უფრო რთულ მოდელებთან შედარებისთვის. თუ უფრო კომპლექსური მოდელი DLinear-ზე უკეთეს შედეგს ვერ აჩვენებს, მაშინ დამატებითი სირთულე შეიძლება არც გვიღირდეს.
+
+## N-BEATS მოდელი
+
+N-BEATS (Neural Basis Expansion Analysis for Interpretable Time Series Forecasting) გამოვიყენეთ როგორც უფრო ძლიერი deep learning ალტერნატივა DLinear-ის შემდეგ. DLinear-ის მსგავსად, მონაცემები გადავიყვანეთ `NeuralForecast`-ის long format-ში, სადაც თითოეული `Store-Dept` წყვილი ცალ-ცალკე time series-ად განიხილება:
+
+- `unique_id` — ერთი time-series თითოეული `Store` + `Dept` წყვილისთვის.
+- `ds` — კვირის თარიღი.
+- `y` — სამიზნე ცვლადი, ანუ `Weekly_Sales`.
+
+N-BEATS-ის მთავარი იდეაა, რომ ქსელი დაყოფილია სტეკებად — **trend** სტეკი და **seasonality** სტეკი. თითოეული სტეკი შედგება რამდენიმე ბლოკისგან, სადაც ყოველი ბლოკი წარმოქმნის ორ გამოსავალს: **backcast** (input ფანჯრის რეკონსტრუქცია) და **forecast** (მომავლის პროგნოზი). Backcast-ი იმავე სტეკის შემდეგ ბლოკს გამოაკლდება, რათა ბლოკებმა ნარჩენები ისწავლონ. Trend სტეკი პოლინომიურ ფუნქციებს იყენებს გრძელვადიანი ტენდენციების დასაჭერად, ხოლო Seasonality სტეკი — Fourier ფუნქციებს განმეორებადი კანონზომიერებებისთვის. ყველა სტეკის forecast-ები ჯამდება საბოლოო პროგნოზში.
+
+ეს სტრუქტურა N-BEATS-ს DLinear-თან შედარებით უფრო ინტერპრეტირებადს ხდის: trend სტეკიდან ვხედავთ გრძელვადიან ზრდა/კლების ტენდენციას, ხოლო seasonality სტეკიდან — კვირობრივ და წლიურ სეზონურ pattern-ებს.
+
+### რატომ ვიყენებთ მხოლოდ ისტორიულ ინფორმაციას
+
+N-BEATS-ის ამ ექსპერიმენტში მოდელს ვაწვდით მხოლოდ ისტორიულ `Weekly_Sales` მნიშვნელობებს. თითოეული `Store-Dept` სერიისთვის მოდელი იღებს წარსული 52 კვირის გაყიდვებს და ამ history-ზე დაყრდნობით პროგნოზირებს შემდეგ 39 კვირას.
+
+ეს მიდგომა სწორია, რადგან historical `Weekly_Sales` უკვე შეიცავს recurring holiday spikes-ს, სეზონურ კანონზომიერებებს და store-department-ის სპეციფიკურ ქცევებს. მიზანია გვენახა, რამდენად შეუძლია N-BEATS-ს ამ ყველაფრის ავტომატურად გამოყოფა მხოლოდ target history-დან.
+
+### Train/Validation setup
+
+N-BEATS შევაფასეთ DLinear-ის იდენტური time-based validation სქემით, რათა შედეგები პირდაპირ შედარებადი ყოფილიყო.
+
+validation setup:
+
+- Train პერიოდი: `2010-02-05`-დან `2012-01-27`-მდე
+- Validation პერიოდი: `2012-02-03`-დან `2012-10-26`-მდე
+- Input window: `52` კვირა, ანუ მოდელი ყოველი პროგნოზისთვის უყურებს ბოლო ერთ წელს
+- Forecast horizon: `39` კვირა, რაც ემთხვევა test set-ის კვირების რაოდენობას
+- Frequency: weekly Friday (`W-FRI`)
+
+DLinear-ის მსგავსად, გამოვიყენეთ სრული ისტორიის მქონე სერიები:
+
+- სულ Store-Dept time series: `3331`
+- სრული ისტორიის მქონე რიგები: `2660`
+- მოკლე ან არათანაბარი სერიები, რომლებიც N-BEATS train/evaluation-იდან ამოვიღეთ: `671`
+
+საბოლოო prediction pipeline-ში მოკლე სერიებისთვის fallback ლოგიკა დავამატეთ. თუ N-BEATS კონკრეტულ `Store-Dept` წყვილზე პროგნოზს ვერ აბრუნებს, ვიყენებთ ამ სერიის ბოლო ცნობილ `Weekly_Sales` მნიშვნელობას. თუ არც ეს არსებობს, ვიყენებთ გლობალურ median fallback-ს (`7,612.03`).
+
+Baseline N-BEATS run-მა (30 configs-მდე sweep-ის გარეშე) მიაღწია:
+
+- Train WMAE: `10,280.63`
+- Validation WMAE: `1,922.20`
+
+### Hyperparameter search
+
+გავუშვით N-BEATS-ის 30 configuration და ისინი დავყავით underfit / balanced / overfit კატეგორიებად.
+
+ეს დაყოფა გვეხმარება გვენახა, როგორ რეაგირებს N-BEATS სხვადასხვა სირთულის setup-ზე. Underfit configuration-ები გვაჩვენებს შემთხვევებს, სადაც სტეკები ძალიან პატარაა და სერიების complexity-ს ვერ ასახავს. Overfit configuration-ები — სადაც ბლოკები ძალიან ღრმაა ან MLP ძალიან ფართო, train set-ზე ზედმეტად ხდება მორგება. Balanced configuration-ების მიზანი იყო ამ ორ უკიდურესობას შორის საუკეთესო trade-off-ის პოვნა.
+
+N-BEATS-ისთვის საკვანძო Fourier-based seasonality სტეკის `n_harmonics` და polynomial trend სტეკის `n_polynomials` შერჩევა განსაკუთრებით მნიშვნელოვანია. ზედმეტად დიდი `n_harmonics` ან `n_polynomials` ამატებს flexibility-ს, მაგრამ ზრდის overfit-ის რისკსაც.
+
+ძირითადი tuning parameters იყო:
+
+- `input_size`
+- `stack_types`
+- `n_blocks`
+- `mlp_units`
+- `n_harmonics`
+- `n_polynomials`
+- `max_steps`
+- `learning_rate`
+- `batch_size`
+
+საუკეთესო run იყო `balanced_9`:
+
+| პარამეტრი | მნიშვნელობა |
+|---|---:|
+| `input_size` | `52` |
+| `stack_types` | `['trend', 'seasonality']` |
+| `n_blocks` | `[3, 3]` |
+| `mlp_units` | `[[512, 512], [512, 512]]` |
+| `n_harmonics` | `4` |
+| `n_polynomials` | `3` |
+| `max_steps` | `800` |
+| `learning_rate` | `0.0005` |
+| `batch_size` | `128` |
+| Validation WMAE | `1,858.23` |
+
+WMAE გამოვიყენეთ როგორც მთავარი metric, რადგან Walmart-ის competition-ის შეფასებაშიც holiday weeks უფრო მაღალი წონით ფასდება. ეს მნიშვნელოვანია, რადგან holiday periods გაყიდვებზე ძლიერ გავლენას ახდენს და ასეთ კვირებში მოდელის შეცდომა უფრო დიდ გავლენას ახდენს საბოლოო შეფასებაზე.
+
+### N-BEATS plots
+
+ქვემოთ მოცემული plot აჩვენებს N-BEATS runs-ის შედარებას validation WMAE-ის მიხედვით. მთავარი მიზანი იყო გვეპოვა ის hyperparameter configuration, რომელსაც held-out validation პერიოდზე ყველაზე დაბალი შეცდომა ჰქონდა.
+
+<img src="notebooks/Deep%20Learning/Plots/nbeats_wmae_comparison.png" alt="N-BEATS WMAE comparison" width="600">
+
+შემდეგი plot აჩვენებს იმ Store-Dept წყვილებს, სადაც validation error ყველაზე მაღალი იყო. ასეთი error analysis მნიშვნელოვანია, რადგან overall WMAE კარგ სურათს გვაძლევს, მაგრამ კონკრეტული პრობლემური departments აჩვენებს სად შეიძლება დაგვჭირდეს დამატებითი feature engineering ან სხვა მოდელის გამოყენება.
+
+[📸 აქ ჩასვით N-BEATS-ის ყველაზე დიდი შეცდომების მქონე Store-Dept წყვილების გრაფიკი — `notebooks/Deep Learning/Plots/nbeats_worst_store_dept.png`]
+
+Holiday vs non-holiday error-იც რომ შევადაროთ:
+
+- Non-holiday MAE: `[შევსება საჭიროა]`
+- Holiday MAE: `[შევსება საჭიროა]`
+
+### დასკვნა
+
+N-BEATS ამ პროექტში გამოვიყენეთ როგორც interpretable deep learning მოდელი, რომელიც ავტომატურად ყოფს time series-ს trend და seasonality კომპონენტებად. მისი მიზანი იყო გვენახა, შეუძლია თუ არა სტრუქტურულ decomposition-ზე დამყარებულ neural ქსელს DLinear-ზე მეტი სიგნალის ამოღება ისტორიული გაყიდვების history-დან.
+
+საუკეთესო N-BEATS configuration-მა (`balanced_9`) validation-ზე მიიღო `1,858.23` WMAE, რაც DLinear-ის საუკეთეს შედეგს (`2,555.44`) საგრძნობლად აჯობა. ეს სხვაობა გვიჩვენებს, რომ trend/seasonality decomposition-ის სტრუქტურა და ბლოკ-სტეკური architecture — სადაც ყოველი ბლოკი ნარჩენებს ამუშავებს — Walmart-ის სეზონური weekly sales pattern-ებისთვის ბევრად უფრო შესაფერისია, ვიდრე მარტივი linear projection.
+
+N-BEATS-ის მთავარი უპირატესობა მისი interpretability-ია: trend სტეკი გვაჩვენებს გრძელვადიანი ზრდა/კლების ტენდენციას, ხოლო seasonality სტეკი — განმეორებად კვირობრივ და წლიურ pattern-ებს. ეს insight-ი პრაქტიკული მნიშვნელობა აქვს — შეგვიძლია გვესმოდეს, სად ჭირდება მოდელს გაუმჯობესება და რა ტიპის pattern-ებს ვერ ჭერს.
