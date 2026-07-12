@@ -1,0 +1,31 @@
+# Core data science
+pandas
+numpy
+matplotlib
+seaborn
+scikit-learn
+joblib
+
+# Notebook
+jupyter
+ipykernel
+
+# Deep learning forecasting
+neuralforecast
+
+# Statistical forecasting
+statsmodels
+statsforecast
+mlforecast
+
+# Gradient boosting
+lightgbm
+xgboost
+
+# Experiment tracking
+mlflow
+dagshub
+wandb
+
+# Other forecasting
+prophet
