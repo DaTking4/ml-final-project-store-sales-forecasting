@@ -36,10 +36,15 @@ def handle_missing(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+STORE_TYPES = ["A", "B", "C"]
+
+
 def add_store_features(df: pd.DataFrame, stores: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     stores = stores[["Store", "Type", "Size"]].copy()
-    type_dummies = pd.get_dummies(stores["Type"], prefix="Type")
+    type_dummies = pd.get_dummies(
+        stores["Type"].astype(pd.CategoricalDtype(categories=STORE_TYPES)), prefix="Type"
+    )
     stores = pd.concat([stores.drop(columns="Type"), type_dummies], axis=1)
     return df.merge(stores, on="Store", how="left")
 
@@ -72,7 +77,9 @@ def apply_shared_features(df: pd.DataFrame) -> pd.DataFrame:
     df = handle_missing(df)
 
     if "Type" in df.columns:
-        type_dummies = pd.get_dummies(df["Type"], prefix="Type")
+        type_dummies = pd.get_dummies(
+            df["Type"].astype(pd.CategoricalDtype(categories=STORE_TYPES)), prefix="Type"
+        )
         df = pd.concat([df.drop(columns=["Type"]), type_dummies], axis=1)
 
     if "IsHoliday" in df.columns:
