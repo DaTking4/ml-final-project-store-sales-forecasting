@@ -1,5 +1,7 @@
 # ml-final-project-walmart-recruiting
 
+**W&B Report:** [Sales Forecasting Report](https://wandb.ai/dkhak22-free-university-of-tbilisi-/walmart-sales-forecasting/reports/Sales-Forecasting--VmlldzoxNzQ4MDIxNw)
+
 ## მონაცემების წინასწარი დამუშავება
 
 ### NaN მნიშვნელობები
