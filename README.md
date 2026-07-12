@@ -529,3 +529,94 @@ DLinear-ისა და LightGBM-ისგან განსხვავებ
 XGBoost ამ პროექტში გამოვიყენეთ როგორც LightGBM-ის ალტერნატიული gradient boosting მოდელი, lag features-ის უფრო მდიდარი სეტით. საუკეთესო XGBoost configuration-მა (`overfit_5`) validation-ზე მიიღო `1,709.59` WMAE — ეს ყველა სხვა მოდელზე უკეთესი შედეგია: N-BEATS (`1,858.23`), LightGBM (`1,864.71`), TFT (`2,216.19`) და DLinear (`2,555.44`).
 
 XGBoost-ის წარმატების მიზეზი ალბათ lag features-ის სიმდიდრეა: `lag_26` (ახლო ისტორია) და `lag_52` (სეზონური reference) rolling stats-თან ერთად კომბინაციაში ქმნის ძლიერ autoregressive signal-ს. ამ signal-ს slow-learning large ensemble კარგად ეუფლება, ამიტომ "overfit" კონფიგურაციაც კი validation-ზე კარგ შედეგს იძლევა.
+
+## ARIMA მოდელი
+
+ARIMA გამოვიყენეთ როგორც კლასიკური სტატისტიკური baseline. ის ყველა სხვა მოდელისგან განსხვავდება: არ სწავლობს cross-series pattern-ებს, არ იყენებს exogenous features-ს და neural network-ის მსგავსად არ ახდენს optimization-ს gradient descent-ით. ამის ნაცვლად, ARIMA თითოეული Store-Dept სერიისთვის ცალ-ცალკე ფიტდება likelihood-ის მაქსიმიზაციის გზით. ეს მიდგომა კლასიკური time-series forecasting-ის სტანდარტია.
+
+ARIMA(p, d, q) სამი კომპონენტისგან შედგება:
+- **p** — autoregressive order: რამდენი წინა მნიშვნელობა გამოიყენება პროგნოზში
+- **d** — differencing order: რამდენჯერ სჭირდება სერიას differencing სტაციონარობისთვის
+- **q** — moving average order: რამდენი წინა შეცდომა შედის მოდელში
+
+### რატომ ვიყენებთ მხოლოდ ისტორიულ ინფორმაციას
+
+ARIMA უნივარიატული მოდელია — მხოლოდ `Weekly_Sales` time series-ს ამუშავებს. ARIMA-ს სტრუქტურა exogenous ცვლადებს არ ითვალისწინებს (ARIMAX ვარიანტი ითვლისწინებდა, მაგრამ ამ ექსპერიმენტში არ გამოვიყენეთ). მიზანი იყო გვენახა, რამდენად კარგ baseline-ს იძლევა სუფთა სტატისტიკური მოდელი მხოლოდ historical pattern-ებიდან.
+
+### Train/Validation setup
+
+ARIMA შევაფასეთ სხვა მოდელების იდენტური time-based validation სქემით, თუმცა განსხვავება ისაა, რომ ARIMA თითოეულ სერიაზე ცალ-ცალკე train-დება.
+
+validation setup:
+
+- Train პერიოდი: `2010-02-05`-დან `2012-01-27`-მდე
+- Validation პერიოდი: `2012-02-03`-დან `2012-10-26`-მდე
+- Input size: `52` კვირა (მინიმალური ისტორია fitting-ისთვის)
+- Forecast horizon: `39` კვირა
+- Frequency: weekly Friday (`W-FRI`)
+
+სრული ისტორიის მქონე სერიები:
+
+- სულ Store-Dept time series: `3331`
+- სრული ისტორიის მქონე რიგები: `2660`
+- მოკლე ან არათანაბარი სერიები, რომლებიც ARIMA train/evaluation-იდან ამოვიღეთ: `671`
+
+სერია fallback-ს იყენებს (ბოლო ცნობილი მნიშვნელობა), თუ ARIMA-ს fitting-ი ვერ მოხდა ან სერია ძალიან მოკლეა.
+
+### Hyperparameter search
+
+გავუშვით ARIMA-ს 30 configuration. ARIMA-ისთვის "hyperparameter"-ები სინამდვილეში model order-ია — p, d, q-ს კომბინაციები. ამიტომ კატეგორიების დასახელებაც განსხვავებულია:
+
+- **underfit** (6 config): პატარა order-ები (p≤1, q≤1), მაღალი regularization, ცოტა iteration — მოდელი ვერ სწავლობს სრულ autoregressive სტრუქტურას
+- **balanced** (18 config): ზომიერი order-ები (p≤2, q≤2), სხვადასხვა differencing და trend კომბინაციები
+- **complex** (6 config): მაღალი order-ები (p=3–4, q=2–3), მეტი iteration — რთული მოდელი, კონვერგენციის ალბათობა მცირდება
+
+ARIMA-ს შემთხვევაში "overfit" ტერმინი არ გამოვიყენეთ, რადგან კლასიკური სტატისტიკური მოდელი ნეირონულ ქსელზე სხვანაირად რეაგირებს სირთულის ზრდაზე: ძალიან მაღალი order-ები კონვერგენციის პრობლემებს ქმნის, ვიდრე overfit-ს train set-ზე.
+
+ძირითადი tuning parameters იყო:
+
+- `p` (AR order)
+- `d` (differencing)
+- `q` (MA order)
+- `trend` (`'n'` — no trend, `'c'` — constant)
+- `enforce_stationarity`, `enforce_invertibility`
+- `concentrate_scale`
+- `maxiter`
+
+საუკეთესო run იყო `complex_5`:
+
+| პარამეტრი | მნიშვნელობა |
+|---|---:|
+| `p` | `3` |
+| `d` | `0` |
+| `q` | `3` |
+| `trend` | `'c'` (constant) |
+| `enforce_stationarity` | `False` |
+| `enforce_invertibility` | `False` |
+| `maxiter` | `160` |
+| Validation WMAE | `2,657.08` |
+
+### ARIMA plots
+
+ქვემოთ მოცემული plot აჩვენებს ARIMA runs-ის შედარებას validation WMAE-ის მიხედვით.
+
+<img src="notebooks/Plots/arima_wmae_comparison.png" alt="ARIMA WMAE comparison" width="600">
+
+შემდეგი plot აჩვენებს იმ Store-Dept წყვილებს, სადაც validation error ყველაზე მაღალი იყო. ყველაზე რთული სერია `(38, 38)` იყო — მის შეცდომა სხვა სერიებზე მნიშვნელოვნად მაღალი აღმოჩნდა.
+
+<img src="notebooks/Plots/arima_worst_store_dept.png" alt="ARIMA worst Store-Dept validation errors" width="600">
+
+Holiday vs non-holiday error-იც რომ შევადაროთ:
+
+- Non-holiday MAE: `2,602.48`
+- Holiday MAE: `2,859.12`
+
+ARIMA-ს holiday კვირებზე უფრო მაღალი შეცდომა ჰქონდა, რაც მოსალოდნელია: ARIMA-ს არ აქვს `IsHoliday` ინფორმაცია, ამიტომ holiday spike-ებს მხოლოდ historical pattern-ებიდან ცდილობს დაჭერას — ეს კი ყოველ წელს სხვადასხვა სიდიდის spike-ებისთვის არასაკმარისია.
+
+### დასკვნა
+
+ARIMA ამ პროექტში გამოვიყენეთ როგორც კლასიკური სტატისტიკური baseline — ერთ-ერთი ყველაზე ძველი და კარგად შესწავლილი time-series forecasting მეთოდი. საუკეთესო ARIMA configuration-მა (`complex_5`) validation-ზე მიიღო `2,657.08` WMAE.
+
+ეს შედეგი ყველა სხვა მოდელზე სუსტია: XGBoost-ს (`1,709.59`), N-BEATS-ს (`1,858.23`), LightGBM-ს (`1,864.71`), TFT-ს (`2,216.19`) და DLinear-ს (`2,555.44`) ჩამოუვარდება. ეს სხვაობა მოსალოდნელია — ARIMA-ს არ აქვს cross-series სწავლის შესაძლებლობა, არ იყენებს exogenous features-ს და per-series fitting კომპიუტაციურად ძვირია.
+
+მნიშვნელოვანი შეზღუდვა: საბოლოო ARIMA მოდელების fitting-ი სრულ training data-ზე ყველა `2,660` სერიაზე ჩავარდა — `complex_5` order ძალიან რთული იყო სრული ისტორიისთვის, ამიტომ test predictions fallback მნიშვნელობებს ეყრდნობა (ბოლო ცნობილი გაყიდვა). ARIMA-ს პრაქტიკული ღირებულება ამ პროექტში interpretability-ია: ის ნათლად გვიჩვენებს, რომ სტატისტიკური baseline-ი ML მოდელებთან კონკურენციისთვის საკმარისი არ არის.
