@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import numpy as np
 import pandas as pd
+from statsmodels.tsa.statespace.kalman_filter import MEMORY_CONSERVE
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 
 from src.metrics import wmae_from_df
@@ -42,7 +44,37 @@ def fit_arima_result(y: pd.Series, config: dict[str, Any]):
         enforce_invertibility=bool(config.get("enforce_invertibility", False)),
         concentrate_scale=bool(config.get("concentrate_scale", False)),
     )
+    # With a seasonal period of 52, the state-space form's state dimension
+    # includes s*D extra states for seasonal differencing (e.g. +52 states per
+    # D), and statsmodels retains the full per-timestep filtered/predicted/
+    # smoothed covariance history by default -- for a ~160-week series that's
+    # a ~275MB object *per fitted series*, which is infeasible to hold for the
+    # ~2,660 series this project fits. MEMORY_CONSERVE drops that per-timestep
+    # diagnostic history (not needed once we only call .forecast() later) and
+    # shrinks it to ~8MB with numerically identical forecasts -- verified by
+    # comparing .forecast() output with/without the flag on the same fit.
+    model.ssm.set_conserve_memory(MEMORY_CONSERVE)
     return model.fit(disp=False, maxiter=int(config["maxiter"]))
+
+
+def is_valid_forecast(forecast, y_train) -> bool:
+    """Reject non-finite or implausibly large forecasts.
+
+    Every config in this project's sweeps sets enforce_stationarity=False and
+    enforce_invertibility=False, so a badly-conditioned fit can converge to
+    roots outside the unit circle and produce a forecast that diverges
+    exponentially over a 26-39 step horizon -- still finite floats (e.g. ~1e17
+    has been observed in practice), so a plain np.isnan() check misses them
+    entirely and one such series can dominate an aggregate metric like WMAE,
+    or leak a nonsense prediction into a real submission.
+    """
+    forecast = np.asarray(forecast, dtype=float)
+    if forecast.size == 0 or not np.isfinite(forecast).all():
+        return False
+    y_train = np.asarray(y_train, dtype=float).ravel()
+    scale = float(np.abs(y_train).max()) if y_train.size else 0.0
+    bound = max(scale * 50.0, 1.0)
+    return bool(np.abs(forecast).max() <= bound)
 
 
 def forecast_one_series(
@@ -58,11 +90,54 @@ def forecast_one_series(
     try:
         result = fit_arima_result(y_train, config=config)
         forecast = np.asarray(result.forecast(steps=steps), dtype=float)
-        if len(forecast) != steps or np.isnan(forecast).any():
+        if len(forecast) != steps or not is_valid_forecast(forecast, y_train):
             return np.full(steps, fallback_value, dtype=float), True
         return forecast, False
     except Exception:
         return np.full(steps, fallback_value, dtype=float), True
+
+
+def _evaluate_one_arima_series(
+    unique_id: str,
+    y_train: pd.Series,
+    valid_group: pd.DataFrame,
+    config: dict[str, Any],
+    model_col: str,
+    min_train_points: int,
+):
+    valid_group = valid_group.copy()
+    fallback_value = float(y_train.iloc[-1])
+
+    if len(y_train) < min_train_points:
+        forecast = np.full(len(valid_group), fallback_value, dtype=float)
+        failed = True
+        fitted = pd.Series(dtype=float)
+    else:
+        try:
+            result = fit_arima_result(y_train, config=config)
+            forecast = np.asarray(result.forecast(steps=len(valid_group)), dtype=float)
+            fitted = result.fittedvalues
+            failed = len(forecast) != len(valid_group) or not is_valid_forecast(forecast, y_train)
+            if failed:
+                forecast = np.full(len(valid_group), fallback_value, dtype=float)
+        except Exception:
+            forecast = np.full(len(valid_group), fallback_value, dtype=float)
+            failed = True
+            fitted = pd.Series(dtype=float)
+
+    valid_group[model_col] = forecast
+    valid_group["used_fallback"] = failed
+
+    train_row = None
+    if not fitted.empty:
+        train_row = pd.DataFrame({
+            "unique_id": unique_id,
+            "ds": fitted.index,
+            "y": y_train.reindex(fitted.index).to_numpy(),
+            model_col: fitted.to_numpy(),
+        })
+
+    return valid_group, train_row, failed
 
 
 def evaluate_arima_config(
@@ -73,48 +148,25 @@ def evaluate_arima_config(
     holiday_lookup: pd.DataFrame,
     model_col: str,
     min_train_points: int,
+    n_jobs: int = -2,
 ) -> tuple[pd.DataFrame, float, int, float]:
-    rows = []
-    train_rows = []
-    failures = 0
+    from joblib import Parallel, delayed
 
-    for idx, unique_id in enumerate(arima_ids, start=1):
-        y_train = train_by_id[unique_id]
-        valid_group = valid_by_id[unique_id].copy()
-        fallback_value = float(y_train.iloc[-1])
+    # Process-based (loky, joblib's default): statsmodels' SARIMAX fit is a
+    # CPU-bound Kalman filter + scipy.optimize loop in the same process, so
+    # unlike Prophet's cmdstan-subprocess case, threading would stay GIL-bound
+    # and barely use more than one core. Each task ships only its own series.
+    print(f"Evaluating {len(arima_ids):,} series for {config.get('label', '')} (n_jobs={n_jobs})")
+    results = Parallel(n_jobs=n_jobs, verbose=1)(
+        delayed(_evaluate_one_arima_series)(
+            unique_id, train_by_id[unique_id], valid_by_id[unique_id], config, model_col, min_train_points,
+        )
+        for unique_id in arima_ids
+    )
 
-        if len(y_train) < min_train_points:
-            forecast = np.full(len(valid_group), fallback_value, dtype=float)
-            failed = True
-            fitted = pd.Series(dtype=float)
-        else:
-            try:
-                result = fit_arima_result(y_train, config=config)
-                forecast = np.asarray(result.forecast(steps=len(valid_group)), dtype=float)
-                fitted = result.fittedvalues
-                failed = len(forecast) != len(valid_group) or np.isnan(forecast).any()
-                if failed:
-                    forecast = np.full(len(valid_group), fallback_value, dtype=float)
-            except Exception:
-                forecast = np.full(len(valid_group), fallback_value, dtype=float)
-                failed = True
-                fitted = pd.Series(dtype=float)
-
-        failures += int(failed)
-        valid_group[model_col] = forecast
-        valid_group["used_fallback"] = failed
-        rows.append(valid_group)
-
-        if not fitted.empty:
-            train_rows.append(pd.DataFrame({
-                "unique_id": unique_id,
-                "ds": fitted.index,
-                "y": y_train.reindex(fitted.index).to_numpy(),
-                model_col: fitted.to_numpy(),
-            }))
-
-        if idx % 250 == 0:
-            print(f"Evaluated {idx:,}/{len(arima_ids):,} series for {config['label']}")
+    rows = [r[0] for r in results]
+    train_rows = [r[1] for r in results if r[1] is not None]
+    failures = sum(r[2] for r in results)
 
     cv_df = pd.concat(rows, ignore_index=True)
     cv_df = cv_df.merge(holiday_lookup, on=["unique_id", "ds"], how="left")
@@ -143,29 +195,74 @@ def evaluate_arima_config(
     return cv_df, float(val_wmae), failures, float(train_wmae)
 
 
+def model_file_path(models_dir, unique_id: str) -> str:
+    return os.path.join(str(models_dir), f"{unique_id.replace('/', '_')}.joblib")
+
+
+def _fit_one_final_arima_series(unique_id: str, y: pd.Series, config: dict[str, Any], models_dir: str):
+    import joblib
+
+    y = y.copy()
+    y.index = pd.DatetimeIndex(y.index)
+    y = y.asfreq("W-FRI").interpolate(limit_direction="both")
+    try:
+        result = fit_arima_result(y, config=config)
+        # Write the fitted result straight to its permanent location and hand
+        # back only a bool. SARIMAXResultsWrapper objects are several MB each
+        # even after MEMORY_CONSERVE (~8MB); never assembling them into one
+        # big in-memory dict or one combined joblib file avoids two separate
+        # failure modes hit in practice: (1) BrokenProcessPool/MemoryError
+        # from returning many large objects through the multiprocessing pipe
+        # at once, and (2) a single combined artifact file (~22GB for
+        # ~2,660 series) that reliably breaks a single HTTP PUT upload to
+        # DagsHub (SSLError/EOF mid-transfer). Many small per-series files
+        # upload individually and reliably instead.
+        joblib.dump(result, model_file_path(models_dir, unique_id))
+        return unique_id, True
+    except Exception:
+        return unique_id, False
+
+
 def fit_arima_models(
     full_long_df: pd.DataFrame,
     ids,
     config: dict[str, Any],
-) -> tuple[dict[str, Any], list[str]]:
-    models = {}
-    failures = []
+    models_dir,
+    n_jobs: int = -2,
+) -> tuple[list[str], list[str]]:
+    """Fit one SARIMAX/ARIMA per series, writing each directly to
+    `models_dir` as `<unique_id>.joblib`. Returns (fitted_ids, failed_ids) --
+    NOT the fitted objects themselves; load individual models back with
+    `load_arima_model(models_dir, unique_id)` at prediction time instead of
+    holding the whole fleet in memory at once.
+    """
+    from joblib import Parallel, delayed
 
-    for idx, unique_id in enumerate(ids, start=1):
-        y = (
-            full_long_df[full_long_df["unique_id"] == unique_id]
-            .sort_values("ds")["y"]
-            .astype(float)
-        )
-        y.index = pd.DatetimeIndex(y.index)
-        y = y.asfreq("W-FRI")
-        y = y.interpolate(limit_direction="both")
-        try:
-            models[unique_id] = fit_arima_result(y, config=config)
-        except Exception:
-            failures.append(unique_id)
+    os.makedirs(str(models_dir), exist_ok=True)
 
-        if idx % 250 == 0:
-            print(f"Fit {idx:,}/{len(ids):,} final ARIMA models")
+    grouped = {
+        unique_id: group.sort_values("ds").set_index("ds")["y"].astype(float)
+        for unique_id, group in full_long_df[full_long_df["unique_id"].isin(ids)].groupby("unique_id")
+    }
 
-    return models, failures
+    print(f"Fitting {len(ids):,} final ARIMA models (n_jobs={n_jobs}) -> {models_dir}")
+    results = Parallel(n_jobs=n_jobs, verbose=1)(
+        delayed(_fit_one_final_arima_series)(unique_id, grouped[unique_id], config, models_dir)
+        for unique_id in ids
+    )
+
+    fitted_ids = [unique_id for unique_id, ok in results if ok]
+    failures = [unique_id for unique_id, ok in results if not ok]
+    return fitted_ids, failures
+
+
+def load_arima_model(models_dir, unique_id: str):
+    import joblib
+
+    path = model_file_path(models_dir, unique_id)
+    if not os.path.exists(path):
+        return None
+    try:
+        return joblib.load(path)
+    except Exception:
+        return None

@@ -162,7 +162,7 @@ def fit_prophet_models(
     from joblib import Parallel, delayed
 
     grouped = {
-        unique_id: group.sort_values("ds")["y"].astype(float)
+        unique_id: group.sort_values("ds").set_index("ds")["y"].astype(float)
         for unique_id, group in full_long_df[full_long_df["unique_id"].isin(ids)].groupby("unique_id")
     }
 

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from typing import Any
+import os
 
 import joblib
 import mlflow.pyfunc
 import pandas as pd
 
+from src.arima_utils import is_valid_forecast, load_arima_model
 from src.pipeline.arima_pipeline import make_submission_id
 
 
@@ -17,14 +18,17 @@ class SARIMAForecastPipeline(mlflow.pyfunc.PythonModel):
     ):
         self.fallback_by_id = fallback_by_id or {}
         self.global_fallback = float(global_fallback)
-        self.models: dict[str, Any] = {}
+        self.models_dir: str | None = None
+        self.fitted_ids: set[str] = set()
 
     def load_context(self, context):
-        payload = joblib.load(context.artifacts["sarima_model_path"])
-        self.models = payload.get("models", {})
-        self.fallback_by_id = payload.get("fallback_by_id", self.fallback_by_id)
+        root = context.artifacts["sarima_model_dir"]
+        manifest = joblib.load(os.path.join(root, "manifest.joblib"))
+        self.models_dir = os.path.join(root, "models")
+        self.fitted_ids = set(manifest.get("fitted_ids", []))
+        self.fallback_by_id = manifest.get("fallback_by_id", self.fallback_by_id)
         self.global_fallback = float(
-            payload.get("global_fallback", self.global_fallback)
+            manifest.get("global_fallback", self.global_fallback)
         )
 
     def predict(self, context, model_input):
@@ -40,7 +44,14 @@ class SARIMAForecastPipeline(mlflow.pyfunc.PythonModel):
         pred_parts = []
         for unique_id, group in test_keys.sort_values("Date").groupby("unique_id"):
             group = group.copy()
-            model = self.models.get(unique_id)
+            # Loaded and discarded one series at a time -- with ~2,660 fitted
+            # models at several MB each, holding them all in memory at once
+            # is neither necessary for prediction nor safe to assume fits.
+            model = (
+                load_arima_model(self.models_dir, unique_id)
+                if unique_id in self.fitted_ids and self.models_dir is not None
+                else None
+            )
             if model is None:
                 group["Weekly_Sales"] = self.fallback_by_id.get(
                     unique_id, self.global_fallback
@@ -48,6 +59,8 @@ class SARIMAForecastPipeline(mlflow.pyfunc.PythonModel):
             else:
                 try:
                     forecast = pd.Series(model.forecast(steps=len(group))).astype(float)
+                    if not is_valid_forecast(forecast.to_numpy(), model.model.endog):
+                        raise ValueError(f"Non-finite or implausible forecast for {unique_id}")
                     group["Weekly_Sales"] = forecast.to_numpy()
                 except Exception:
                     group["Weekly_Sales"] = self.fallback_by_id.get(
