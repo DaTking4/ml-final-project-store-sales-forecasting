@@ -2,6 +2,15 @@
 
 **W&B Report:** [Sales Forecasting Report](https://wandb.ai/dkhak22-free-university-of-tbilisi-/walmart-sales-forecasting/reports/Sales-Forecasting--VmlldzoxNzQ4MDIxNw)
 
+## Kaggle-ის საბოლოო შედეგი
+
+<img src="kaggle.png" alt="Kaggle submission score" width="800">
+
+- **Private Score:** `3,928.20`
+- **Public Score:** `3,863.17`
+
+Submission აწყობილია საუკეთესო შიდა validation შედეგის მქონე მოდელზე — `XGBoost` (`overfit_5` configuration). საინტერესოა, რომ რეალურ Kaggle test set-ზე მიღებული score (`~3,928`) საგრძნობლად მაღალია, ვიდრე ჩვენი შიდა validation WMAE (`1,709.59`) — ეს მოსალოდნელია, რადგან Kaggle-ის leaderboard სრულიად უცნობ test period-ს იყენებს, რომელიც ჩვენს time-based validation window-ს არ ემთხვევა და, შესაძლოა, განსხვავებულ სეზონურ pattern-ებს შეიცავდეს.
+
 ## მონაცემების წინასწარი დამუშავება
 
 ### NaN მნიშვნელობები
@@ -49,6 +58,30 @@
 
 `features.csv` იმერჯება train და test მონაცემებთან `Store` და `Date` სვეტების მიხედვით, რათა თითოეულ სტრიქონს დაემატოს `Temperature`, `Fuel_Price`, `CPI`, `Unemployment` და `MarkDown1`–`MarkDown5`.
 
+
+## რატომ ვყოფთ კონფიგურაციებს Underfit / Balanced / Overfit კატეგორიებად
+
+თითქმის ყველა მოდელისთვის (გამონაკლისია მხოლოდ TimesFM, რომელიც საერთოდ არ ივარჯიშება Walmart-ის მონაცემებზე) hyperparameter sweep-ს სამ კატეგორიად ვყოფთ:
+
+- **Underfit** — შეგნებულად "სუსტი" კონფიგურაციები: მცირე capacity (მცირე `hidden_size` / `n_blocks` / order), ცოტა training step, აგრესიული regularization. მიზანია დავინახოთ, როგორ იქცევა მოდელი, როცა მას საკმარისი "ტევადობა" არ აქვს historical pattern-ების დასაჭერად.
+- **Balanced** — გონივრული, საშუალო სირთულის კონფიგურაციები, საიდანაც საბოლოოდ ვირჩევთ production მოდელს.
+- **Overfit** — შეგნებულად "ზედმეტად ძლიერი" კონფიგურაციები: დიდი capacity, ბევრი training step, მინიმალური ან ნულოვანი regularization. მიზანია დავინახოთ, სად იწყება train set-ზე overfitting და validation performance-ის გაუარესება.
+
+ეს დაყოფა საჭიროა, რადგან ერთი კონფიგურაციის validation WMAE-ის ცოდნა საკმარისი არ არის იმის გასაგებად, *რატომ* მუშაობს ის კარგად ან ცუდად. სამივე რეჟიმის ერთმანეთთან შედარება ცხადად გვაჩვენებს bias-variance trade-off-ს: თუ underfit და overfit ორივე მკვეთრად ჩამორჩება, ხოლო balanced საუკეთესოა — ეს ადასტურებს, რომ ჩვენი "balanced" არჩევანი შემთხვევითი კი არ არის, არამედ რეალურად წარმოადგენს ტევადობის ოპტიმალურ წერტილს ამ კონკრეტული feature set-ისა და validation window-სთვის.
+
+**კლასიკური სტატისტიკური მოდელებისთვის (ARIMA, SARIMA) ტერმინოლოგია ოდნავ განსხვავებულია.** ეს მოდელები gradient descent-ით არ ვარჯიშობენ, ამიტომ "overfit" ნეირონული ქსელის მნიშვნელობით მათთვის ნაკლებად რელევანტურია — მის ნაცვლად მაღალი `(p,d,q)` order უბრალოდ ზრდის numerical instability-ის რისკს likelihood-ის მაქსიმიზაციის დროს. ამიტომ ARIMA/SARIMA-ს sweep-ებში "overfit" კატეგორიის ნაცვლად "**complex**" გვაქვს.
+
+### როცა "overfit" კონფიგურაცია ნამდვილად ზედმეტად ხდება
+
+ARIMA-ს sweep-ში რამდენიმე მაღალი სირთულის კონფიგურაცია იმდენად არასტაბილური აღმოჩნდა, რომ validation WMAE ასტრონომიულ მნიშვნელობებამდე აიწია — ეს აღარ არის უბრალო overfitting, არამედ ნამდვილი numerical divergence:
+
+| Config | Order | Validation WMAE |
+|---|---|---:|
+| `balanced_6` | `(2,1,1)` | `4.02 × 10¹⁵` |
+| `balanced_17` | `(2,1,1)`, `concentrate_scale=True` | `7.77 × 10¹⁰²` |
+| `complex_6` | `(4,1,2)`, `concentrate_scale=True` | `4.67 × 10²⁹¹` |
+
+ეს ხდება, როცა state-space optimizer-ი ვერ converge-დება და unit circle-ს გარეთ root-ებზე "იჭერს" — მიღებული პროგნოზი ტექნიკურად კვლავ სასრული (finite) რიცხვია, ამიტომ ჩვენი safety check (`is_valid_forecast`, რომელიც forecast-ს series-ის საკუთარ scale-თან ადარებს) ზოგჯერ ვერ იჭერს ამ divergence-ს, თუ თავად series-ის scale საკმარისად დიდია. სხვა სიტყვებით, ზოგიერთი "overfit"/"complex" კონფიგურაცია ნამდვილად "ზედმეტად ბევრი" აღმოჩნდა მოდელისთვის გასამკლავებლად. სწორედ ეს არის კარგი მაგალითი იმისა, თუ რატომ არასდროს ვირჩევთ production მოდელს ერთი შემთხვევითი configuration-ის გაშვების საფუძველზე — მხოლოდ underfit/balanced/overfit სამივე რეჟიმის სისტემური შედარება გვაჩვენებს ასეთ failure mode-ებს დროულად.
 
 ## DLinear მოდელი
 
@@ -734,6 +767,18 @@ validation setup:
 - სრული ისტორიის მქონე სერიები: `2,660`
 - მოკლე ან არათანაბარი სერიები, რომლებიც Prophet train/evaluation-იდან ამოვიღეთ: `671`
 
+### რატომ ვერ დავასრულეთ Prophet-ის სრული sweep
+
+Prophet ამ პროექტში ყველაზე ნელი მოდელი აღმოჩნდა — და არა უბრალოდ "ცოტა ნელი", არამედ პრაქტიკულად შეუძლებელი გახდა 30-configuration-იანი sweep-ის ბოლომდე მიყვანა ჩვენთვის ხელმისაწვდომი გამოთვლითი რესურსებით. თითოეული configuration ცალ-ცალკე აწყობს Bayesian მოდელს `2,660` Store-Dept სერიიდან თითოეულისთვის (`cmdstanpy`-ს გარე subprocess-ის საშუალებით) — ანუ ერთი configuration ნიშნავს `2,660` დამოუკიდებელ MAP fit-ს. მიუხედავად იმისა, რომ threading-ს ვიყენებდით (`n_jobs=-1`/`-2`, GIL-ისგან თავისუფალი, რადგან რეალური სამუშაო cmdstan-ის გარე subprocess-ში ხდება და არა Python-ის პროცესში), ერთი configuration-ის დასრულებას საათობით სჭირდებოდა დრო — და ეს მხოლოდ ერთი კონფიგურაციისთვის, `30`-დან.
+
+ეს რამდენჯერმე ვცადეთ სხვადასხვანაირად:
+
+- პირველად სრული `30`-configuration grid-ით (`6` underfit, `18` balanced, `6` overfit) გავუშვით — sweep საათობით გაგრძელდა და `underfit_2`-ის დამუშავებისას საბოლოოდ შევწყვიტეთ, რადგან რეალისტურ დროში დასრულების იმედი აღარ იყო.
+- სცადეთ series-ების subsample-იც (`prophet_ids[:200]`, notebook-ში ეს ხაზი კომენტარადაც არის დატოვებული სისწრაფის შესამოწმებლად) — თუმცა ეს მხოლოდ სასწრაფო იტერაციისთვის გამოგვადგებოდა, არა production configuration-ისთვის, რადგან სრული `2,660`-სერიიანი coverage-ის დაკარგვა validation-ის შედეგებს არასაკმარისად წარმომადგენლობითს გახდიდა.
+- kernel-ის რამდენჯერმე restart-ის შემდეგაც კვლავ ვცადეთ sweep-ის თავიდან გაშვება, მაგრამ დროის რეალური შეზღუდვების გამო ისევ ვერ დავასრულეთ სრული grid.
+
+საბოლოოდ, მრავალი მცდელობის მიუხედავად, მთლიანად მხოლოდ ორი configuration დასრულდა: **baseline** და **`underfit_1`**. დანარჩენი `28` კონფიგურაცია (მათ შორის მთელი `balanced` და `overfit` კატეგორიები) დაუსრულებელი დარჩა — ამიტომ Prophet-ისთვის საბოლოო შედარებაში გამოყენებულია მხოლოდ baseline configuration, hyperparameter-ით ოპტიმიზირებული საბოლოო მოდელის ნაცვლად.
+
 ### Hyperparameter search
 
 გავუშვით Prophet-ის sweep-ისთვის `30` configuration დაგეგმილი (`6` underfit, `18` balanced, `6` overfit), ძირითადი tuning parameters:
@@ -744,7 +789,7 @@ validation setup:
 - `yearly_seasonality`
 - `changepoint_range`
 
-თითოეული კონფიგურაცია `2,660` სერიაზე parallel (`n_jobs=-2`, `cmdstanpy`-ზე დაფუძნებული) ფიტვას საჭიროებდა, რაც გამოთვლითად ძვირი აღმოჩნდა — sweep `underfit_2`-ის დამუშავებისას შეწყდა, ამიტომ საბოლოო შედარებისთვის მხოლოდ ორი დასრულებული run გვაქვს: baseline და `underfit_1`.
+ზემოთ აღწერილი runtime პრობლემის გამო, დასრულებული გვაქვს მხოლოდ ორი run: baseline და `underfit_1`.
 
 | run | train_wmae | val_wmae | gap | status |
 |---|---:|---:|---:|---|

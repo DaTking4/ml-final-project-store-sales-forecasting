@@ -125,7 +125,6 @@ def strip_neuralforecast_callbacks(model) -> None:
     inside MLflow/PyTorch Lightning hparams because it is a Python object.
     """
 
-    # Remove from trainer kwargs
     if hasattr(model, "trainer_kwargs"):
         callbacks = model.trainer_kwargs.get("callbacks")
 
@@ -136,13 +135,11 @@ def strip_neuralforecast_callbacks(model) -> None:
                 if not isinstance(cb, GradientNormLogger)
             ]
 
-    # Remove from Lightning hyperparameters
     hparams = getattr(model, "hparams", None)
 
     if hparams is not None and "callbacks" in hparams:
         hparams["callbacks"] = []
 
-    # Remove from initial hyperparameters
     hparams_initial = getattr(model, "_hparams_initial", None)
 
     if hparams_initial is not None and "callbacks" in hparams_initial:

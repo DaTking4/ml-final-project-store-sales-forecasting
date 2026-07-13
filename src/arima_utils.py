@@ -44,15 +44,8 @@ def fit_arima_result(y: pd.Series, config: dict[str, Any]):
         enforce_invertibility=bool(config.get("enforce_invertibility", False)),
         concentrate_scale=bool(config.get("concentrate_scale", False)),
     )
-    # With a seasonal period of 52, the state-space form's state dimension
-    # includes s*D extra states for seasonal differencing (e.g. +52 states per
-    # D), and statsmodels retains the full per-timestep filtered/predicted/
-    # smoothed covariance history by default -- for a ~160-week series that's
-    # a ~275MB object *per fitted series*, which is infeasible to hold for the
-    # ~2,660 series this project fits. MEMORY_CONSERVE drops that per-timestep
-    # diagnostic history (not needed once we only call .forecast() later) and
-    # shrinks it to ~8MB with numerically identical forecasts -- verified by
-    # comparing .forecast() output with/without the flag on the same fit.
+    # Drops per-timestep diagnostic history statsmodels keeps by default
+    # (~275MB/series -> ~8MB across ~2,660 series), same forecast output.
     model.ssm.set_conserve_memory(MEMORY_CONSERVE)
     return model.fit(disp=False, maxiter=int(config["maxiter"]))
 
@@ -152,10 +145,8 @@ def evaluate_arima_config(
 ) -> tuple[pd.DataFrame, float, int, float]:
     from joblib import Parallel, delayed
 
-    # Process-based (loky, joblib's default): statsmodels' SARIMAX fit is a
-    # CPU-bound Kalman filter + scipy.optimize loop in the same process, so
-    # unlike Prophet's cmdstan-subprocess case, threading would stay GIL-bound
-    # and barely use more than one core. Each task ships only its own series.
+    # Process-based (loky): the SARIMAX fit is CPU-bound, so threading would
+    # stay GIL-bound (unlike Prophet's cmdstan-subprocess case).
     print(f"Evaluating {len(arima_ids):,} series for {config.get('label', '')} (n_jobs={n_jobs})")
     results = Parallel(n_jobs=n_jobs, verbose=1)(
         delayed(_evaluate_one_arima_series)(
@@ -207,16 +198,9 @@ def _fit_one_final_arima_series(unique_id: str, y: pd.Series, config: dict[str, 
     y = y.asfreq("W-FRI").interpolate(limit_direction="both")
     try:
         result = fit_arima_result(y, config=config)
-        # Write the fitted result straight to its permanent location and hand
-        # back only a bool. SARIMAXResultsWrapper objects are several MB each
-        # even after MEMORY_CONSERVE (~8MB); never assembling them into one
-        # big in-memory dict or one combined joblib file avoids two separate
-        # failure modes hit in practice: (1) BrokenProcessPool/MemoryError
-        # from returning many large objects through the multiprocessing pipe
-        # at once, and (2) a single combined artifact file (~22GB for
-        # ~2,660 series) that reliably breaks a single HTTP PUT upload to
-        # DagsHub (SSLError/EOF mid-transfer). Many small per-series files
-        # upload individually and reliably instead.
+        # Write straight to disk and return only a bool -- avoids returning
+        # many large objects through the multiprocessing pipe at once, and
+        # avoids one combined ~22GB artifact that breaks the upload to DagsHub.
         joblib.dump(result, model_file_path(models_dir, unique_id))
         return unique_id, True
     except Exception:

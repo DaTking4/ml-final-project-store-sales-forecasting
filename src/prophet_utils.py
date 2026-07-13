@@ -53,9 +53,7 @@ def fit_prophet_model(y: pd.Series, config: dict[str, Any], holidays_df: pd.Data
     from prophet import Prophet  # import locally to avoid slow top-level import
 
     params = {k: v for k, v in config.items() if k not in ("label", "regime")}
-    # We only ever read `yhat` from predict() output, never the uncertainty
-    # interval columns, so skip posterior sampling entirely -- it's pure cost
-    # for output nobody uses, and it runs on every predict() call.
+    # We only ever read `yhat`, so skip posterior sampling entirely.
     if holidays_df is None:
         holidays_df = make_holidays_df()
     model = Prophet(holidays=holidays_df, uncertainty_samples=0, **params)
@@ -143,11 +141,9 @@ def evaluate_prophet_configs(
     configs_by_label = {config["label"]: config for config in configs}
     jobs = [(label, unique_id) for label in configs_by_label for unique_id in prophet_ids]
 
-    # threading, not the default process-pool (loky) backend: each series' real
-    # work happens in an external cmdstan subprocess, and Python releases the
-    # GIL while waiting on it, so threads already get true OS-level concurrency
-    # here -- without loky's extra worker-process layer, which was crashing on
-    # concurrent first-launches of the freshly-built stan binary.
+    # threading, not loky: each fit runs in an external cmdstan subprocess and
+    # releases the GIL, so threads get true concurrency without loky's
+    # worker-process layer (which crashed on concurrent stan binary builds).
     print(
         f"Evaluating {len(configs_by_label)} config(s) x {len(prophet_ids):,} series "
         f"({len(jobs):,} fits total, n_jobs={n_jobs}, threading)"
