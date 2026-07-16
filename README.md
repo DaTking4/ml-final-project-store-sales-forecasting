@@ -1,4 +1,4 @@
-# ml-final-project-walmart-recruiting
+# ml-final-project-walmart-store-sales-forecasting
 
 ## Kaggle-ის საბოლოო შედეგი
 
