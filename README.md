@@ -1,7 +1,5 @@
 # ml-final-project-walmart-recruiting
 
-**W&B Report:** [Sales Forecasting Report](https://wandb.ai/dkhak22-free-university-of-tbilisi-/walmart-sales-forecasting/reports/Sales-Forecasting--VmlldzoxNzQ4MDIxNw)
-
 ## Kaggle-ის საბოლოო შედეგი
 
 <img src="kaggle.png" alt="Kaggle submission score" width="800">
@@ -928,3 +926,5 @@ TimesFM ამ პროექტის ყველაზე უნიკალ
 *SARIMA არ შედის ცხრილში — მისი notebook-ი (`model_experiment_SARIMA.ipynb`) ჯერ არ დასრულებულა/გაშვებულა captured output-ით, ამიტომ WMAE ხელმისაწვდომი არ არის.*
 
 TimesFM აჯობებს Prophet-ს, DLinear-ს, TFT-ს, PatchTST-ს და ARIMA-ს, და N-BEATS-სა და LightGBM-ს ძალიან ახლოს უდგება — ეს შთამბეჭდავია იმის გათვალისწინებით, რომ მოდელი Walmart-ის data-ზე სწავლას საერთოდ არ ახდენდა. ეს ადასტურებს foundation model-ების პოტენციალს domain-specific time-series ამოცანებში.
+
+**W&B Report:** [Sales Forecasting Report](https://wandb.ai/dkhak22-free-university-of-tbilisi-/walmart-sales-forecasting/reports/Sales-Forecasting--VmlldzoxNzQ4MDIxNw)
